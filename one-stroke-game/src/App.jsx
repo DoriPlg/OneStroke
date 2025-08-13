@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { io } from "socket.io-client";
+import { socket } from "./socket";
 import Canvas from "./Canvas";
 
-const socket = io("http://localhost:4000");
 
 export default function App() {
   const [currentPlayer, setCurrentPlayer] = useState(null);

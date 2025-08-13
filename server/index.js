@@ -1,3 +1,15 @@
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "http://localhost:5173",
+        methods: ["GET", "POST"]
+    }
+});
 let players = []; // queue of participants (socket IDs)
 let currentTurnIndex = 0;
 
@@ -59,3 +71,8 @@ io.on("connection", (socket) => {
     io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
   });
 });
+
+
+httpServer.listen(4000, () => {
+    console.log("Server running on http://localhost:4000");
+  });

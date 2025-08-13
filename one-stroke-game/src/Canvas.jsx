@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect } from "react";
-import { io } from "socket.io-client";
+import { socket } from "./socket";
 
-const socket = io("http://localhost:4000");
 
 export default function Canvas({ canDraw }) {
   const canvasRef = useRef(null);
@@ -58,9 +57,11 @@ export default function Canvas({ canDraw }) {
   };
 
   const stopDrawing = () => {
+    if (!drawing) return;
     setDrawing(false);
     ctxRef.current.lastX = null;
     ctxRef.current.lastY = null;
+    socket.emit("end-turn");
   };
 
   const drawLine = (x0, y0, x1, y1) => {
