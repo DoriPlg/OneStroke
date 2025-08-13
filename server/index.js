@@ -10,41 +10,85 @@ const io = new Server(httpServer, {
         methods: ["GET", "POST"]
     }
 });
-let players = []; // queue of participants (socket IDs)
+let playerRooms = {
+}; // maps player IDs to room IDs
+let waitingPlayers = []; // queue of participants (socket IDs)
+let rooms = {};
+
+const MIN_PLAYERS = 3;
+const MAX_PLAYERS = 5;
 let currentTurnIndex = 0;
 
 function getCurrentPlayer() {
   return players.length > 0 ? players[currentTurnIndex] : null;
 }
 
-function advanceTurn() {
-  if (players.length === 0) return;
-  currentTurnIndex = (currentTurnIndex + 1) % players.length;
-  io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+function advanceTurn(roomId) {
+        const room = rooms[roomId];
+        if (!room || room.players.length === 0) return;
+    
+        room.turnIndex = (room.turnIndex + 1) % room.players.length;
+    
+        const currentPlayerId = room.players[room.turnIndex];
+        io.to(roomId).emit("turnChanged", { playerId: currentPlayerId });
+    }
+
+function leaveRoom(socket) {
+    if (waitingPlayers.includes(socket.id)) {
+        waitingPlayers = waitingPlayers.filter(id => id !== socket.id);
+        io.to("waiting-room").emit("waiting-count", waitingPlayers.length);
+    }
+    if (playerRooms[socket.id]) {
+        const roomId = playerRooms[socket.id];
+        rooms[roomId].players = rooms[roomId].players.filter(id => id !== socket.id);
+        
+        if (rooms[roomId].players.length < MIN_PLAYERS) {
+            console.log(`Room ${roomId} deleted due to insufficient players.`);
+            
+            // Clean up all remaining players in the room
+            rooms[roomId].players.forEach(playerId => {
+                const playerSocket = io.sockets.sockets.get(playerId);
+                if (playerSocket) {
+                    playerSocket.leave(roomId);
+                }
+                delete playerRooms[playerId]; // Clear their room assignment
+            });
+            
+            io.to(roomId).emit("room-deleted");
+            delete rooms[roomId];
+            socket.leave(roomId);
+            delete playerRooms[socket.id];
+            return;
+        }
+        
+        io.to(roomId).emit("player-list", rooms[roomId].players);
+        if (rooms[roomId].turnIndex >= rooms[roomId].players.length) {
+            rooms[roomId].turnIndex = 0; // Reset turn index if it exceeds player count
+        }
+        socket.leave(roomId);
+        delete playerRooms[socket.id]; // Remove player from playerRooms map
+        console.log(`Player ${socket.id} left room ${roomId}`);
+    }
 }
 
 io.on("connection", (socket) => {
   console.log(`Connected: ${socket.id}`);
 
   socket.on("join-game", () => {
-    if (!players.includes(socket.id)) {
-      players.push(socket.id);
-      console.log(`Joined game: ${socket.id}`);
-      io.emit("player-list", players);
-      io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+    if (!waitingPlayers.includes(socket.id)) {
+        console.log("New player:", socket.id);
+
+        // Put player in waiting
+        waitingPlayers.push(socket.id);
+        socket.join("waiting-room");
+        io.to("waiting-room").emit("waiting-count", waitingPlayers.length);
+
+        checkForRoomCreation();
     }
   });
 
   socket.on("leave-game", () => {
-    const wasInGame = players.includes(socket.id);
-    players = players.filter((id) => id !== socket.id);
-
-    if (wasInGame && currentTurnIndex >= players.length) {
-      currentTurnIndex = 0;
-    }
-
-    io.emit("player-list", players);
-    io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+    leaveRoom(socket);
   });
 
   socket.on("draw-stroke", (data) => {
@@ -54,23 +98,47 @@ io.on("connection", (socket) => {
   });
 
   socket.on("end-turn", () => {
-    if (socket.id === getCurrentPlayer()) {
-      advanceTurn();
-    }
+    const roomId = Object.keys(rooms).find(id => rooms[id].players.includes(socket.id));
+    if (!roomId) return;
+
+    // Broadcast the move to everyone in that room
+    socket.to(roomId).emit("playerDrew", { playerId: socket.id });
+
+    // Advance to the next turn in this room
+    advanceTurn(roomId);
   });
 
   socket.on("disconnect", () => {
     console.log(`Disconnected: ${socket.id}`);
-    players = players.filter((id) => id !== socket.id);
+    leaveRoom(socket);
 
-    if (currentTurnIndex >= players.length) {
-      currentTurnIndex = 0;
-    }
-
-    io.emit("player-list", players);
-    io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
   });
 });
+
+function checkForRoomCreation() {
+    while (waitingPlayers.length >= MIN_PLAYERS) {
+    const roomId = `room-${crypto.randomUUID().slice(0, 6)}`;
+      const playersForRoom = waitingPlayers.splice(0, MAX_PLAYERS);
+      if (waitingPlayers.length > 0) {
+        waitingPlayers = waitingPlayers.filter(id => !playersForRoom.includes(id));
+      }
+  
+      rooms[roomId] = {
+        players: playersForRoom,
+        turnIndex: 0
+      };
+  
+      playersForRoom.forEach(pid => {
+        const socket = io.sockets.sockets.get(pid);
+        playerRooms[pid] = roomId;
+        socket.leave("waiting-room");
+        socket.join(roomId);
+        socket.emit("room-assigned", { roomId, players: playersForRoom });
+      });
+  
+      console.log(`Room ${roomId} created with players:`, playersForRoom);
+    }
+  }
 
 
 httpServer.listen(4000, () => {

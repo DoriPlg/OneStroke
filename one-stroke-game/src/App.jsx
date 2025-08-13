@@ -40,6 +40,7 @@ export default function App() {
   const myTurn = inGame && currentPlayer === myId;
 
   return (
+    <body onunload={leaveGame}>
     <div>
       <h1>One Stroke Game</h1>
       <p>Players: {players.join(", ")}</p>
@@ -61,5 +62,6 @@ export default function App() {
         </button>
       )}
     </div>
+    </body>
   );
 }
