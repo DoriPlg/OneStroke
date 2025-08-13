@@ -1,22 +1,8 @@
-import express from "express";
-import { createServer } from "http";
-import { Server } from "socket.io";
-
-const app = express();
-const httpServer = createServer(app);
-
-const io = new Server(httpServer, {
-  cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
-});
-
-let players = []; // list of socket IDs
+let players = []; // queue of participants (socket IDs)
 let currentTurnIndex = 0;
 
 function getCurrentPlayer() {
-  return players[currentTurnIndex];
+  return players.length > 0 ? players[currentTurnIndex] : null;
 }
 
 function advanceTurn() {
@@ -26,12 +12,28 @@ function advanceTurn() {
 }
 
 io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
-  players.push(socket.id);
+  console.log(`Connected: ${socket.id}`);
 
-  // Send initial turn info
-  io.emit("player-list", players);
-  io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+  socket.on("join-game", () => {
+    if (!players.includes(socket.id)) {
+      players.push(socket.id);
+      console.log(`Joined game: ${socket.id}`);
+      io.emit("player-list", players);
+      io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+    }
+  });
+
+  socket.on("leave-game", () => {
+    const wasInGame = players.includes(socket.id);
+    players = players.filter((id) => id !== socket.id);
+
+    if (wasInGame && currentTurnIndex >= players.length) {
+      currentTurnIndex = 0;
+    }
+
+    io.emit("player-list", players);
+    io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
+  });
 
   socket.on("draw-stroke", (data) => {
     if (socket.id === getCurrentPlayer()) {
@@ -46,10 +48,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`User disconnected: ${socket.id}`);
+    console.log(`Disconnected: ${socket.id}`);
     players = players.filter((id) => id !== socket.id);
 
-    // Adjust turn index if necessary
     if (currentTurnIndex >= players.length) {
       currentTurnIndex = 0;
     }
@@ -57,8 +58,4 @@ io.on("connection", (socket) => {
     io.emit("player-list", players);
     io.emit("turn-update", { currentPlayer: getCurrentPlayer() });
   });
-});
-
-httpServer.listen(4000, () => {
-  console.log("Server running on http://localhost:4000");
 });
