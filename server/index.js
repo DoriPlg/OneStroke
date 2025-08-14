@@ -17,10 +17,10 @@ let rooms = {};
 
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 5;
-let currentTurnIndex = 0;
 
-function getCurrentPlayer() {
-  return players.length > 0 ? players[currentTurnIndex] : null;
+function getCurrentPlayer(roomId) {
+    if (!rooms[roomId] || rooms[roomId].players.length === 0) return null;
+    return rooms[roomId].players[rooms[roomId].turnIndex];
 }
 
 function advanceTurn(roomId) {
@@ -50,6 +50,9 @@ function leaveRoom(socket) {
                 const playerSocket = io.sockets.sockets.get(playerId);
                 if (playerSocket) {
                     playerSocket.leave(roomId);
+                    console.log(`Player ${playerId} removed from room ${roomId} to waiting room.`);
+                    waitingPlayers.push(playerId); // Move them back to waiting
+                    io.to("waiting-room").emit("waiting-count", waitingPlayers.length);
                 }
                 delete playerRooms[playerId]; // Clear their room assignment
             });
@@ -88,11 +91,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("leave-game", () => {
+    console.log(`Player ${socket.id} left the game`);
     leaveRoom(socket);
   });
 
   socket.on("draw-stroke", (data) => {
-    if (socket.id === getCurrentPlayer()) {
+    if (socket.id === getCurrentPlayer(playerRooms[socket.id])) {
       socket.broadcast.emit("draw-stroke", data);
     }
   });

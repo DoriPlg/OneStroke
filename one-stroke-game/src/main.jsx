@@ -13,6 +13,10 @@ socket.on("room-assigned", ({ roomId, players }) => {
   setPlayers(players);
 });
 
+socket.on("turnChanged", ({ playerId }) => {
+  console.log(`It's now ${playerId}'s turn`);
+});
+
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
