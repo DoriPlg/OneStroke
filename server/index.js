@@ -33,6 +33,7 @@ function advanceTurn(roomId) {
         io.to(roomId).emit("turnChanged", { playerId: currentPlayerId });
     }
 
+    
 function leaveRoom(socket) {
     if (waitingPlayers.includes(socket.id)) {
         waitingPlayers = waitingPlayers.filter(id => id !== socket.id);
@@ -50,26 +51,26 @@ function leaveRoom(socket) {
                 const playerSocket = io.sockets.sockets.get(playerId);
                 if (playerSocket) {
                     playerSocket.leave(roomId);
-                    console.log(`Player ${playerId} removed from room ${roomId} to waiting room.`);
-                    waitingPlayers.push(playerId); // Move them back to waiting
-                    io.to("waiting-room").emit("waiting-count", waitingPlayers.length);
+                    console.log(`Player ${playerId} removed from room ${roomId}.`);
                 }
                 delete playerRooms[playerId]; // Clear their room assignment
             });
             
+            // Notify all players in the room that it's being deleted
             io.to(roomId).emit("room-deleted");
             delete rooms[roomId];
-            socket.leave(roomId);
-            delete playerRooms[socket.id];
-            return;
+        } else {
+            // Room still has enough players, just update the player list
+            io.to(roomId).emit("player-list", rooms[roomId].players);
+            if (rooms[roomId].turnIndex >= rooms[roomId].players.length) {
+                rooms[roomId].turnIndex = 0; // Reset turn index if it exceeds player count
+            }
+            // Advance turn to next player
+            advanceTurn(roomId);
         }
         
-        io.to(roomId).emit("player-list", rooms[roomId].players);
-        if (rooms[roomId].turnIndex >= rooms[roomId].players.length) {
-            rooms[roomId].turnIndex = 0; // Reset turn index if it exceeds player count
-        }
         socket.leave(roomId);
-        delete playerRooms[socket.id]; // Remove player from playerRooms map
+        delete playerRooms[socket.id];
         console.log(`Player ${socket.id} left room ${roomId}`);
     }
 }

@@ -2,57 +2,112 @@ import { useState, useEffect } from "react";
 import { socket } from "./socket";
 import Canvas from "./Canvas";
 
-
 export default function App() {
+  const [gameState, setGameState] = useState("disconnected"); // "disconnected", "waiting", "in-room"
   const [currentPlayer, setCurrentPlayer] = useState(null);
   const [myId, setMyId] = useState(null);
   const [players, setPlayers] = useState([]);
-  const [inGame, setInGame] = useState(false);
+  const [waitingCount, setWaitingCount] = useState(0);
+  const [roomId, setRoomId] = useState(null);
 
   useEffect(() => {
     setMyId(socket.id);
 
-    socket.on("player-list", setPlayers);
-    socket.on("turn-update", ({ currentPlayer }) => {
-      setCurrentPlayer(currentPlayer);
+    // Handle waiting room events
+    socket.on("waiting-count", (count) => {
+      setWaitingCount(count);
+    });
+
+    // Handle room assignment
+    socket.on("room-assigned", ({ roomId, players }) => {
+      setRoomId(roomId);
+      setPlayers(players);
+      setGameState("in-room");
+      // Set first player as current player initially
+      setCurrentPlayer(players[0]);
+    });
+
+    // Handle turn changes
+    socket.on("turnChanged", ({ playerId }) => {
+      setCurrentPlayer(playerId);
+    });
+
+    // Handle room deletion - return to home
+    socket.on("room-deleted", () => {
+      setGameState("disconnected");
+      setRoomId(null);
+      setPlayers([]);
+      setCurrentPlayer(null);
+    });
+
+    // Handle player list updates in room
+    socket.on("player-list", (updatedPlayers) => {
+      setPlayers(updatedPlayers);
     });
 
     return () => {
+      socket.off("waiting-count");
+      socket.off("room-assigned");
+      socket.off("turnChanged");
+      socket.off("room-deleted");
       socket.off("player-list");
-      socket.off("turn-update");
     };
   }, []);
 
-  const joinGame = () => {
+  const joinWaitingRoom = () => {
     socket.emit("join-game");
-    setInGame(true);
+    setGameState("waiting");
   };
 
   const leaveGame = () => {
     socket.emit("leave-game");
-    setInGame(false);
+    setGameState("disconnected");
+    setRoomId(null);
+    setPlayers([]);
+    setCurrentPlayer(null);
+    setWaitingCount(0);
   };
 
   const endTurn = () => {
     socket.emit("end-turn");
   };
 
-  const myTurn = inGame && currentPlayer === myId;
+  const myTurn = gameState === "in-room" && currentPlayer === myId;
 
+  // Disconnected/Home screen
+  if (gameState === "disconnected") {
+    return (
+      <div>
+        <h1>One Stroke Game</h1>
+        <p>Welcome! Click below to join the waiting room.</p>
+        <button onClick={joinWaitingRoom}>Join Waiting Room</button>
+      </div>
+    );
+  }
+
+  // Waiting room screen
+  if (gameState === "waiting") {
+    return (
+      <div>
+        <h1>One Stroke Game</h1>
+        <p>Waiting for players... {waitingCount} in queue</p>
+        <p>Need 3 players minimum to start a room.</p>
+        <button onClick={leaveGame}>Leave Waiting Room</button>
+      </div>
+    );
+  }
+
+  // In-room playing screen
   return (
-    <body onunload={leaveGame}>
     <div>
       <h1>One Stroke Game</h1>
+      <p>Room: {roomId}</p>
       <p>Players: {players.join(", ")}</p>
       <p>Current Turn: {currentPlayer || "None"}</p>
 
-      {!inGame ? (
-        <button onClick={joinGame}>Join Game</button>
-      ) : (
-        <button onClick={leaveGame}>Leave Game</button>
-      )}
+      <button onClick={leaveGame}>Leave Room</button>
 
-      {myTurn ? <p>🎯 Your Turn!</p> : inGame ? <p>⏳ Waiting...</p> : <p>—</p>}
+      {myTurn ? <p>🎯 Your Turn!</p> : <p>⏳ Waiting...</p>}
 
       <Canvas canDraw={myTurn} />
 
@@ -62,6 +117,5 @@ export default function App() {
         </button>
       )}
     </div>
-    </body>
   );
 }
