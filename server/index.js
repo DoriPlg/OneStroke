@@ -37,7 +37,8 @@ function advanceTurn(roomId) {
         room.turnTimer = setTimeout(() => {
           console.log(`Turn timeout for room ${roomId}, player ${currentPlayerId}`);
           io.to(roomId).emit("turnTimeout");
-          advanceTurn(roomId); // Auto-advance to next player
+          advanceTurn(roomId); // Auto-advance to next player 
+          // TODO: cancel whatever drawing they were doing
       }, TURN_TIME_SECONDS * 1000);
   
       io.to(roomId).emit("turnChanged", { 
@@ -62,7 +63,7 @@ function startGameTimer(roomId) {
     });
 }
 
-function endGame(roomId) {
+function endGame(roomId) { // TODO: add AI judge guessing what it is
   const room = rooms[roomId];
   if (!room) return;
 
