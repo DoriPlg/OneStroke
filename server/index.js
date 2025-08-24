@@ -97,8 +97,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("draw-stroke", (data) => {
-    if (socket.id === getCurrentPlayer(playerRooms[socket.id])) {
-      socket.broadcast.emit("draw-stroke", data);
+    const roomId = playerRooms[socket.id];
+    if (roomId && socket.id === getCurrentPlayer(roomId)) {
+      socket.to(roomId).emit("draw-stroke", data);
     }
   });
 

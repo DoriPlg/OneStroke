@@ -12,6 +12,7 @@ export default function App() {
 
   useEffect(() => {
     setMyId(socket.id);
+    
 
     // Handle waiting room events
     socket.on("waiting-count", (count) => {
@@ -30,6 +31,9 @@ export default function App() {
     // Handle turn changes
     socket.on("turnChanged", ({ playerId }) => {
       setCurrentPlayer(playerId);
+      if (playerId === myId) {
+        alert("It's your turn!");
+      };
     });
 
     // Handle room deletion - return to home
@@ -102,6 +106,7 @@ export default function App() {
     <div>
       <h1>One Stroke Game</h1>
       <p>Room: {roomId}</p>
+      <p>Your ID: {myId}</p>
       <p>Players: {players.join(", ")}</p>
       <p>Current Turn: {currentPlayer || "None"}</p>
 
