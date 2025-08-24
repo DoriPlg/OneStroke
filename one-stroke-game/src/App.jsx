@@ -11,8 +11,18 @@ export default function App() {
   const [roomId, setRoomId] = useState(null);
 
   useEffect(() => {
-    setMyId(socket.id);
-    
+    // Set myId when socket connects
+    const handleConnect = () => {
+      setMyId(socket.id);
+    };
+
+    // Check if socket is already connected
+    if (socket.connected) {
+      setMyId(socket.id);
+    }
+
+    // Listen for connection
+    socket.on("connect", handleConnect);
 
     // Handle waiting room events
     socket.on("waiting-count", (count) => {
@@ -24,16 +34,12 @@ export default function App() {
       setRoomId(roomId);
       setPlayers(players);
       setGameState("in-room");
-      // Set first player as current player initially
       setCurrentPlayer(players[0]);
     });
 
     // Handle turn changes
     socket.on("turnChanged", ({ playerId }) => {
       setCurrentPlayer(playerId);
-      if (playerId === myId) {
-        alert("It's your turn!");
-      };
     });
 
     // Handle room deletion - return to home
@@ -50,13 +56,24 @@ export default function App() {
     });
 
     return () => {
+      socket.off("connect", handleConnect);
       socket.off("waiting-count");
       socket.off("room-assigned");
       socket.off("turnChanged");
       socket.off("room-deleted");
       socket.off("player-list");
     };
-  }, []);
+  }, [myId]);
+
+  // Show loading if we don't have socket ID yet
+  if (!myId) {
+    return (
+      <div>
+        <h1>One Stroke Game</h1>
+        <p>Connecting...</p>
+      </div>
+    );
+  }
 
   const joinWaitingRoom = () => {
     socket.emit("join-game");
@@ -114,7 +131,7 @@ export default function App() {
 
       {myTurn ? <p>🎯 Your Turn!</p> : <p>⏳ Waiting...</p>}
 
-      <Canvas canDraw={myTurn} />
+      <Canvas canDraw={myTurn} roomId={roomId} />
 
       {myTurn && (
         <button onClick={endTurn} style={{ marginTop: "10px" }}>

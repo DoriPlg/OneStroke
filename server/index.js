@@ -96,11 +96,18 @@ io.on("connection", (socket) => {
     leaveRoom(socket);
   });
 
-  socket.on("draw-stroke", (data) => {
-    const roomId = playerRooms[socket.id];
-    if (roomId && socket.id === getCurrentPlayer(roomId)) {
-      socket.to(roomId).emit("draw-stroke", data);
-    }
+    socket.on("draw-stroke", (data) => {
+      const roomId = playerRooms[socket.id];
+      const currentPlayer = getCurrentPlayer(roomId);
+      
+      console.log(`Draw stroke from ${socket.id}, in room ${roomId}, current player: ${currentPlayer}`);
+      
+      if (roomId && socket.id === currentPlayer) {
+          console.log(`Emitting draw-stroke to room ${roomId}`);
+          socket.to(roomId).emit("draw-stroke", {...data, fromRoomId: roomId});
+      } else {
+          console.log(`Blocked draw-stroke: not current player or no room`);
+      }
   });
 
   socket.on("end-turn", () => {

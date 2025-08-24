@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from "react";
 import { socket } from "./socket";
 
 
-export default function Canvas({ canDraw }) {
+export default function Canvas({ canDraw, roomId }) {
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -22,11 +22,17 @@ export default function Canvas({ canDraw }) {
 
   // Receive strokes from server
   useEffect(() => {
-    socket.on("draw-stroke", ({ x0, y0, x1, y1 }) => {
-      drawLine(x0, y0, x1, y1);
-    });
-    return () => socket.off("draw-stroke");
-  }, []);
+    const handleDrawStroke = ({ x0, y0, x1, y1, fromRoomId }) => {
+      // ONLY draw if the stroke is from our current room
+      if (fromRoomId === roomId) {
+        drawLine(x0, y0, x1, y1);
+      }
+      // If fromRoomId doesn't match our roomId, ignore the stroke
+    };
+
+    socket.on("draw-stroke", handleDrawStroke);
+    return () => socket.off("draw-stroke", handleDrawStroke);
+  }, [roomId]);
 
   const startDrawing = (e) => {
     if (!canDraw) throw new Error("Not allowed to draw, wait for your turn");
