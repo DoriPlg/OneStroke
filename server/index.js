@@ -10,6 +10,11 @@ import { spawn } from "child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const DEBUG = process.env.DEBUG === "1";
+const MAX_CONCURRENT_JUDGES = 4;
+let activeJudgeCount = 0;
+const judgeQueue = [];
+
 // Load labels
 const labelsPath = path.join(__dirname, "../hf_model/class_names.txt");
 let availableLabels = [];
@@ -30,6 +35,7 @@ function getRandomUniqueLabels(count) {
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
+  maxHttpBufferSize: 5 * 1024 * 1024, // 5 MB cap
   cors: {
     origin: ["http://localhost:5173", "http://localhost:5174"],
     methods: ["GET", "POST"]
@@ -240,18 +246,18 @@ io.on("connection", (socket) => {
     const roomId = playerRooms[socket.id];
     const currentPlayer = getCurrentPlayer(roomId);
 
-    console.log(`Draw stroke from ${socket.id}, in room ${roomId}, current player: ${currentPlayer}`);
+    if (DEBUG) console.log(`Draw stroke from ${socket.id}, in room ${roomId}, current player: ${currentPlayer}`);
 
     if (roomId && socket.id === currentPlayer) {
-      console.log(`Emitting draw-stroke to room ${roomId}`);
+      if (DEBUG) console.log(`Emitting draw-stroke to room ${roomId}`);
       socket.to(roomId).emit("draw-stroke", { ...data, fromRoomId: roomId });
     } else {
-      console.log(`Blocked draw-stroke: not current player or no room`);
+      if (DEBUG) console.log(`Blocked draw-stroke: not current player or no room`);
     }
   });
 
   socket.on("end-turn", () => {
-    const roomId = Object.keys(rooms).find(id => rooms[id].players.includes(socket.id));
+    const roomId = playerRooms[socket.id];
     if (!roomId) return;
 
     // Broadcast the move to everyone in that room
@@ -263,98 +269,126 @@ io.on("connection", (socket) => {
 
   socket.on("submit-final-image", (data) => {
     const roomId = playerRooms[socket.id];
-    console.log(`[DEBUG] submit-final-image received from ${socket.id}. Room ID: ${roomId}`);
+    if (DEBUG) console.log(`submit-final-image received from ${socket.id}. Room ID: ${roomId}`);
 
     if (!roomId) {
-      console.log(`[DEBUG] No roomId found for player ${socket.id}`);
+      if (DEBUG) console.log(`No roomId found for player ${socket.id}`);
       return;
     }
     const room = rooms[roomId];
     if (!room) {
-      console.log(`[DEBUG] Room ${roomId} does not exist anymore in rooms object!`);
+      if (DEBUG) console.log(`Room ${roomId} does not exist anymore in rooms object!`);
       return;
     }
 
     const { imageBase64 } = data;
+
+    // Validate image payload size
+    if (!imageBase64 || imageBase64.length > 5 * 1024 * 1024) {
+      socket.emit("gameEnded", { error: "Invalid image data" });
+      return;
+    }
 
     console.log(`Received final image for room ${roomId} to judge.`);
     io.to(roomId).emit("judging-started");
 
     const targetWords = Object.values(room.playerTargets);
 
-    // Use the virtual environment's python if it exists
-    const venvPythonPath = path.join(__dirname, "../OneStroke_venv/bin/python");
-    const pythonExecutable = fs.existsSync(venvPythonPath) ? venvPythonPath : "python";
+    const runJudge = () => {
+      activeJudgeCount++;
 
-    // Spawn Python process
-    const pythonProcess = spawn(pythonExecutable, [
-      path.join(__dirname, "judge.py"),
-      imageBase64,
-      ...targetWords
-    ]);
+      // Use the virtual environment's python if it exists
+      const venvPythonPath = path.join(__dirname, "../OneStroke_venv/bin/python");
+      const pythonExecutable = fs.existsSync(venvPythonPath) ? venvPythonPath : "python";
 
-    let outputData = "";
-    let errorData = "";
+      // Spawn Python process — pass image via stdin to avoid argv size limits
+      const pythonProcess = spawn(pythonExecutable, [
+        path.join(__dirname, "judge.py"),
+        ...targetWords
+      ]);
 
-    pythonProcess.stdout.on("data", (data) => {
-      const chunk = data.toString();
-      outputData += chunk;
-      console.log(`[PYTHON STDOUT]: ${chunk}`);
-    });
+      // Pipe image data via stdin
+      pythonProcess.stdin.write(imageBase64);
+      pythonProcess.stdin.end();
 
-    pythonProcess.stderr.on("data", (data) => {
-      const chunk = data.toString();
-      errorData += chunk;
-      console.log(`[PYTHON STDERR]: ${chunk}`);
-    });
+      let outputData = "";
+      let errorData = "";
 
-    pythonProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error(`Python script exited with code ${code}. Error: ${errorData}`);
-        io.to(roomId).emit("gameEnded", { error: "Failed to judge image" });
-        endGame(roomId);
-        return;
-      }
+      pythonProcess.stdout.on("data", (data) => {
+        const chunk = data.toString();
+        outputData += chunk;
+        if (DEBUG) console.log(`[PYTHON STDOUT]: ${chunk}`);
+      });
 
-      try {
-        // Extract the JSON object from the output just in case there are warnings/prints.
-        const jsonMatch = outputData.match(/\{.*\}/s);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in Python output");
+      pythonProcess.stderr.on("data", (data) => {
+        const chunk = data.toString();
+        errorData += chunk;
+        if (DEBUG) console.log(`[PYTHON STDERR]: ${chunk}`);
+      });
+
+      pythonProcess.on("close", (code) => {
+        // Release judge slot and process queue
+        activeJudgeCount--;
+        if (judgeQueue.length > 0) {
+          const next = judgeQueue.shift();
+          next();
         }
 
-        const results = JSON.parse(jsonMatch[0]);
-        if (results.success) {
-          const winnerWord = results.winner.trim();
-          // Find which player had this word
-          let winnerId = null;
-          for (const [playerId, word] of Object.entries(room.playerTargets)) {
-            if (word.trim() === winnerWord) {
-              winnerId = playerId;
-              break;
-            }
+        if (code !== 0) {
+          console.error(`Python script exited with code ${code}. Error: ${errorData}`);
+          io.to(roomId).emit("gameEnded", { error: "Failed to judge image" });
+          endGame(roomId);
+          return;
+        }
+
+        try {
+          // Extract the JSON object from the output just in case there are warnings/prints.
+          const jsonMatch = outputData.match(/\{.*\}/s);
+          if (!jsonMatch) {
+            throw new Error("No JSON found in Python output");
           }
 
-          io.to(roomId).emit("gameCompleted", {
-            winnerId,
-            winnerWord,
-            maxProb: results.max_prob,
-            results: results.results
-          });
-          // Mark room as done so any player leaving triggers full cleanup
-          room.completed = true;
-        } else {
-          io.to(roomId).emit("gameEnded", { error: results.error || "Unknown evaluation error" });
-        }
-      } catch (e) {
-        console.error("Failed to parse output from python:", outputData);
-        console.error("Error:", e);
-        io.to(roomId).emit("gameEnded", { error: "Failed to parse judge results" });
-      }
+          const results = JSON.parse(jsonMatch[0]);
+          if (results.success) {
+            const winnerWord = results.winner.trim();
+            // Find which player had this word
+            let winnerId = null;
+            for (const [playerId, word] of Object.entries(room.playerTargets)) {
+              if (word.trim() === winnerWord) {
+                winnerId = playerId;
+                break;
+              }
+            }
 
-      // Room cleanup is now triggered by the client clicking "Back to Lobby" 
-      // via the leave-game socket event, so we don't auto-end here.
-    });
+            io.to(roomId).emit("gameCompleted", {
+              winnerId,
+              winnerWord,
+              maxProb: results.max_prob,
+              results: results.results
+            });
+            // Mark room as done so any player leaving triggers full cleanup
+            room.completed = true;
+          } else {
+            io.to(roomId).emit("gameEnded", { error: results.error || "Unknown evaluation error" });
+          }
+        } catch (e) {
+          console.error("Failed to parse output from python:", outputData);
+          console.error("Error:", e);
+          io.to(roomId).emit("gameEnded", { error: "Failed to parse judge results" });
+        }
+
+        // Room cleanup is now triggered by the client clicking "Back to Lobby" 
+        // via the leave-game socket event, so we don't auto-end here.
+      });
+    };
+
+    // Concurrency limiter: queue if too many judges are running
+    if (activeJudgeCount < MAX_CONCURRENT_JUDGES) {
+      runJudge();
+    } else {
+      console.log(`Judge queue: room ${roomId} waiting (${judgeQueue.length + 1} queued, ${activeJudgeCount} active)`);
+      judgeQueue.push(runJudge);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -364,6 +398,20 @@ io.on("connection", (socket) => {
   });
 });
 
+
+// Stale room reaper — safety net against leaked rooms
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, room] of Object.entries(rooms)) {
+    if (room.gameStartTime && now - room.gameStartTime > 5 * 60 * 1000) {
+      console.log(`Reaping stale room ${roomId}`);
+      if (room.turnTimer) clearTimeout(room.turnTimer);
+      if (room.gameTimer) clearTimeout(room.gameTimer);
+      room.players.forEach(pid => delete playerRooms[pid]);
+      delete rooms[roomId];
+    }
+  }
+}, 60 * 1000);
 
 httpServer.listen(4000, () => {
   console.log("Server running on http://localhost:4000");

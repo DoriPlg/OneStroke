@@ -89,12 +89,12 @@ def process_image(base64_img):
     return tensor
 
 def main():
-    if len(sys.argv) < 3:
-        print(json.dumps({"error": "Missing arguments. Usage: python judge.py <base64_image> <target_word_1> <target_word_2> ..."}))
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Missing arguments. Usage: python judge.py <target_word_1> <target_word_2> ... (image base64 via stdin)"}))
         sys.exit(1)
 
-    base64_img = sys.argv[1]
-    target_words = sys.argv[2:]
+    base64_img = sys.stdin.read()
+    target_words = sys.argv[1:]
 
     # Path to model files (relative to where Node.js spawns this, which is /server)
     model_dir = Path(__file__).parent.parent / 'hf_model'
