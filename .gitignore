@@ -1,4 +1,5 @@
 # Ignore the virtual environment directory for the OneStroke project
 OneStroke_venv/
 hf_model/
-doodle_cnn.pthnode_modules/
+doodle_cnn.pth
+node_modules/
