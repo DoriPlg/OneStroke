@@ -36,9 +36,15 @@ class DoodleCNN(nn.Module):
         return x
 
 def process_image(base64_img):
+    print("="*100 + "\nProccessing Image\n" + "="*100)
     # Remove data log from base64 if present
     if ',' in base64_img:
         base64_img = base64_img.split(',')[1]
+        
+    # Ensure correct padding for base64 string
+    missing_padding = len(base64_img) % 4
+    if missing_padding:
+        base64_img += '=' * (4 - missing_padding)
         
     image_data = base64.b64decode(base64_img)
     image = Image.open(io.BytesIO(image_data))
@@ -146,6 +152,7 @@ def main():
     max_prob = -1.0
     
     for word in target_words:
+        word = word.strip()
         if word in labels:
             idx = labels.index(word)
             prob = probabilities[idx].item()

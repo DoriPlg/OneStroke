@@ -15,7 +15,7 @@ const labelsPath = path.join(__dirname, "../hf_model/class_names.txt");
 let availableLabels = [];
 try {
   const content = fs.readFileSync(labelsPath, "utf-8");
-  availableLabels = content.split("\n").filter(l => l.trim().length > 0);
+  availableLabels = content.split(/\r?\n/).filter(l => l.trim().length > 0).map(l => l.trim());
   console.log(`Loaded ${availableLabels.length} labels from model.`);
 } catch (err) {
   console.error("Error loading labels file:", err);
@@ -78,6 +78,10 @@ function startGameTimer(roomId) {
   room.gameStartTime = Date.now();
   room.gameTimer = setTimeout(() => {
     console.log(`Game timeout for room ${roomId}`);
+
+    // Stop turns from continuing while judging!
+    if (room.turnTimer) clearTimeout(room.turnTimer);
+
     io.to(roomId).emit("gameTimeout");
     // Don't auto-end game yet, wait for client to submit the image
     // endGame(roomId);
@@ -124,38 +128,41 @@ function leaveRoom(socket) {
     const room = rooms[roomId];
 
     room.players = room.players.filter(id => id !== socket.id);
+    socket.leave(roomId);
+    delete playerRooms[socket.id];
+    console.log(`Player ${socket.id} left room ${roomId}`);
 
-    if (room.players.length < MIN_PLAYERS) {
+    if (room.completed) {
+      // In a completed game, just quietly remove this player.
+      // Only delete the room once the last player has left.
+      if (room.players.length === 0) {
+        delete rooms[roomId];
+        console.log(`Room ${roomId} fully cleaned up after all players left.`);
+      }
+      // Don't broadcast room-deleted or gameEnded — other players are still on the results screen.
+    } else if (room.players.length < MIN_PLAYERS) {
+      // In-progress game lost too many players — tear it all down
       console.log(`Room ${roomId} deleted due to insufficient players.`);
-      // Clear timers
       if (room.turnTimer) clearTimeout(room.turnTimer);
       if (room.gameTimer) clearTimeout(room.gameTimer);
-      // Clean up all remaining players in the room
       rooms[roomId].players.forEach(playerId => {
         const playerSocket = io.sockets.sockets.get(playerId);
         if (playerSocket) {
           playerSocket.leave(roomId);
           console.log(`Player ${playerId} removed from room ${roomId}.`);
         }
-        delete playerRooms[playerId]; // Clear their room assignment
+        delete playerRooms[playerId];
       });
-
-      // Notify all players in the room that it's being deleted
       io.to(roomId).emit("room-deleted");
       delete rooms[roomId];
     } else {
       // Room still has enough players, just update the player list
       io.to(roomId).emit("player-list", rooms[roomId].players);
       if (rooms[roomId].turnIndex >= rooms[roomId].players.length) {
-        rooms[roomId].turnIndex = 0; // Reset turn index if it exceeds player count
+        rooms[roomId].turnIndex = 0;
       }
-      // Advance turn to next player
       advanceTurn(roomId);
     }
-
-    socket.leave(roomId);
-    delete playerRooms[socket.id];
-    console.log(`Player ${socket.id} left room ${roomId}`);
   }
 }
 
@@ -256,9 +263,17 @@ io.on("connection", (socket) => {
 
   socket.on("submit-final-image", (data) => {
     const roomId = playerRooms[socket.id];
-    if (!roomId) return;
+    console.log(`[DEBUG] submit-final-image received from ${socket.id}. Room ID: ${roomId}`);
+
+    if (!roomId) {
+      console.log(`[DEBUG] No roomId found for player ${socket.id}`);
+      return;
+    }
     const room = rooms[roomId];
-    if (!room) return;
+    if (!room) {
+      console.log(`[DEBUG] Room ${roomId} does not exist anymore in rooms object!`);
+      return;
+    }
 
     const { imageBase64 } = data;
 
@@ -282,11 +297,15 @@ io.on("connection", (socket) => {
     let errorData = "";
 
     pythonProcess.stdout.on("data", (data) => {
-      outputData += data.toString();
+      const chunk = data.toString();
+      outputData += chunk;
+      console.log(`[PYTHON STDOUT]: ${chunk}`);
     });
 
     pythonProcess.stderr.on("data", (data) => {
-      errorData += data.toString();
+      const chunk = data.toString();
+      errorData += chunk;
+      console.log(`[PYTHON STDERR]: ${chunk}`);
     });
 
     pythonProcess.on("close", (code) => {
@@ -298,13 +317,19 @@ io.on("connection", (socket) => {
       }
 
       try {
-        const results = JSON.parse(outputData);
+        // Extract the JSON object from the output just in case there are warnings/prints.
+        const jsonMatch = outputData.match(/\{.*\}/s);
+        if (!jsonMatch) {
+          throw new Error("No JSON found in Python output");
+        }
+
+        const results = JSON.parse(jsonMatch[0]);
         if (results.success) {
-          const winnerWord = results.winner;
+          const winnerWord = results.winner.trim();
           // Find which player had this word
           let winnerId = null;
           for (const [playerId, word] of Object.entries(room.playerTargets)) {
-            if (word === winnerWord) {
+            if (word.trim() === winnerWord) {
               winnerId = playerId;
               break;
             }
@@ -316,6 +341,8 @@ io.on("connection", (socket) => {
             maxProb: results.max_prob,
             results: results.results
           });
+          // Mark room as done so any player leaving triggers full cleanup
+          room.completed = true;
         } else {
           io.to(roomId).emit("gameEnded", { error: results.error || "Unknown evaluation error" });
         }
@@ -325,10 +352,8 @@ io.on("connection", (socket) => {
         io.to(roomId).emit("gameEnded", { error: "Failed to parse judge results" });
       }
 
-      // Clean up the room after 10 seconds to allow clients to see results
-      setTimeout(() => {
-        endGame(roomId);
-      }, 10000);
+      // Room cleanup is now triggered by the client clicking "Back to Lobby" 
+      // via the leave-game socket event, so we don't auto-end here.
     });
   });
 

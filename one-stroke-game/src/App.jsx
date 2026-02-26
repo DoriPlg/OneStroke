@@ -66,19 +66,21 @@ export default function App() {
 
     socket.on("gameTimeout", () => {
       // The game time is up. The first player in the room will send the final image.
+
+      // We must grab the image data BEFORE setting gameActive to false, 
+      // because once gameActive is false, the canvas might unmount or restructure.
+      let finalImageData = null;
+      if (players.length > 0 && players[0] === socket.id && canvasRef.current) {
+        finalImageData = canvasRef.current.getCanvasData();
+      }
+
       setGameActive(false);
       setGameState("judging");
 
-      // We rely on the first player's client to submit the unified image
-      setTimeout(() => {
-        if (players.length > 0 && players[0] === socket.id && canvasRef.current) {
-          const imageBase64 = canvasRef.current.getCanvasData();
-          if (imageBase64) {
-            console.log("Submitting final image to judge...");
-            socket.emit("submit-final-image", { imageBase64 });
-          }
-        }
-      }, 500); // Small delay to ensure last strokes are rendered
+      if (finalImageData) {
+        console.log("Submitting final image to judge...");
+        socket.emit("submit-final-image", { imageBase64: finalImageData });
+      }
     });
 
     socket.on("judging-started", () => {
