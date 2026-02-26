@@ -21,6 +21,7 @@ export default function App() {
   const [gameActive, setGameActive] = useState(false);
   const [myTargetWord, setMyTargetWord] = useState("");
   const [judgeResults, setJudgeResults] = useState(null);
+  const [finalImage, setFinalImage] = useState(null);
 
   const canvasRef = useRef(null);
 
@@ -70,14 +71,15 @@ export default function App() {
       // We must grab the image data BEFORE setting gameActive to false, 
       // because once gameActive is false, the canvas might unmount or restructure.
       let finalImageData = null;
-      if (players.length > 0 && players[0] === socket.id && canvasRef.current) {
+      if (canvasRef.current) {
         finalImageData = canvasRef.current.getCanvasData();
+        setFinalImage(finalImageData);
       }
 
       setGameActive(false);
       setGameState("judging");
 
-      if (finalImageData) {
+      if (players.length > 0 && players[0] === socket.id && finalImageData) {
         console.log("Submitting final image to judge...");
         socket.emit("submit-final-image", { imageBase64: finalImageData });
       }
@@ -135,6 +137,7 @@ export default function App() {
     setMyTargetWord("");
     setJudgeResults(null);
     setWaitingCount(0);
+    setFinalImage(null);
   };
 
   // Turn timer countdown
@@ -252,6 +255,11 @@ export default function App() {
     return (
       <div className="card">
         <h1>Time's Up!</h1>
+        {finalImage && (
+          <div style={{ margin: "1.5rem 0", display: "flex", justifyContent: "center" }}>
+            <img src={finalImage} alt="Final Drawing" style={{ maxWidth: "100%", maxHeight: "300px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.2)", background: "white" }} />
+          </div>
+        )}
         <Loader2 className="loading-spinner" />
         <h2>The AI Judge is determining what this looks like...</h2>
         <p>Will it recognize your word?</p>
@@ -276,6 +284,12 @@ export default function App() {
           The AI thinks it looks like:<br />
           <strong>{judgeResults.winnerWord}</strong> ({(judgeResults.maxProb * 100).toFixed(1)}%)
         </div>
+
+        {finalImage && (
+          <div style={{ margin: "1.5rem 0", display: "flex", justifyContent: "center" }}>
+            <img src={finalImage} alt="Final Drawing" style={{ maxWidth: "100%", maxHeight: "250px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.2)", background: "white" }} />
+          </div>
+        )}
 
         <h3>Your Target Word was: <span style={{ color: didIWin ? "#2ee571" : "#ff4757" }}>{myTargetWord}</span></h3>
 
