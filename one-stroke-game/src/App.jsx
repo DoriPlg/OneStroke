@@ -1,11 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
 import Canvas from "./Canvas";
-import { 
+import { Play, Users, Trophy, Loader2 } from "lucide-react";
+import {
   TURN_TIME_SECONDS,
   TOTAL_GAME_TIME_SECONDS,
   MIN_PLAYERS,
-  MAX_PLAYERS } from "../../data.js";
+  MAX_PLAYERS
+} from "../../data.js";
 
 export default function App() {
   const [gameState, setGameState] = useState("disconnected");
@@ -17,6 +19,10 @@ export default function App() {
   const [turnTimeLeft, setTurnTimeLeft] = useState(TURN_TIME_SECONDS);
   const [gameTimeLeft, setGameTimeLeft] = useState(TOTAL_GAME_TIME_SECONDS);
   const [gameActive, setGameActive] = useState(false);
+  const [myTargetWord, setMyTargetWord] = useState("");
+  const [judgeResults, setJudgeResults] = useState(null);
+
+  const canvasRef = useRef(null);
 
   useEffect(() => {
     const handleConnect = () => {
@@ -33,12 +39,15 @@ export default function App() {
       setWaitingCount(count);
     });
 
-    socket.on("room-assigned", ({ roomId, players }) => {
+    socket.on("room-assigned", ({ roomId, players, playerTargets }) => {
       setRoomId(roomId);
       setPlayers(players);
       setGameState("in-room");
       setCurrentPlayer(players[0]);
-      setGameActive(false); // Game hasn't started yet
+      setGameActive(false);
+      if (playerTargets && playerTargets[socket.id]) {
+        setMyTargetWord(playerTargets[socket.id]);
+      }
     });
 
     socket.on("gameStarted", ({ totalGameTime }) => {
@@ -56,29 +65,41 @@ export default function App() {
     });
 
     socket.on("gameTimeout", () => {
-      alert("Game time is up!");
+      // The game time is up. The first player in the room will send the final image.
+      setGameActive(false);
+      setGameState("judging");
+
+      // We rely on the first player's client to submit the unified image
+      setTimeout(() => {
+        if (players.length > 0 && players[0] === socket.id && canvasRef.current) {
+          const imageBase64 = canvasRef.current.getCanvasData();
+          if (imageBase64) {
+            console.log("Submitting final image to judge...");
+            socket.emit("submit-final-image", { imageBase64 });
+          }
+        }
+      }, 500); // Small delay to ensure last strokes are rendered
     });
 
-    socket.on("gameEnded", () => {
-      setGameState("disconnected");
-      setRoomId(null);
-      setPlayers([]);
-      setCurrentPlayer(null);
-      setGameActive(false);
-      setTurnTimeLeft(TURN_TIME_SECONDS);
-      setGameTimeLeft(TOTAL_GAME_TIME_SECONDS);
+    socket.on("judging-started", () => {
+      setGameState("judging");
+    });
+
+    socket.on("gameCompleted", (data) => {
+      setJudgeResults(data);
+      setGameState("completed");
+    });
+
+    socket.on("gameEnded", (data) => {
+      if (data && data.error) {
+        alert(`Game Error: ${data.error}`);
+      }
+      resetState();
     });
 
     socket.on("room-deleted", () => {
       console.log("Room was deleted, returning to home screen");
-      setGameState("disconnected");
-      setRoomId(null);
-      setPlayers([]);
-      setCurrentPlayer(null);
-      setWaitingCount(0);
-      setGameActive(false);
-      setTurnTimeLeft(TURN_TIME_SECONDS);
-      setGameTimeLeft(TOTAL_GAME_TIME_SECONDS);
+      resetState();
     });
 
     socket.on("player-list", (updatedPlayers) => {
@@ -93,11 +114,26 @@ export default function App() {
       socket.off("turnChanged");
       socket.off("turnTimeout");
       socket.off("gameTimeout");
+      socket.off("judging-started");
+      socket.off("gameCompleted");
       socket.off("gameEnded");
       socket.off("room-deleted");
       socket.off("player-list");
     };
-  }, []);
+  }, [players]);
+
+  const resetState = () => {
+    setGameState("disconnected");
+    setRoomId(null);
+    setPlayers([]);
+    setCurrentPlayer(null);
+    setGameActive(false);
+    setTurnTimeLeft(TURN_TIME_SECONDS);
+    setGameTimeLeft(TOTAL_GAME_TIME_SECONDS);
+    setMyTargetWord("");
+    setJudgeResults(null);
+    setWaitingCount(0);
+  };
 
   // Turn timer countdown
   useEffect(() => {
@@ -138,14 +174,7 @@ export default function App() {
 
   const leaveGame = () => {
     socket.emit("leave-game");
-    setGameState("disconnected");
-    setRoomId(null);
-    setPlayers([]);
-    setCurrentPlayer(null);
-    setWaitingCount(0);
-    setGameActive(false);
-    setTurnTimeLeft(TURN_TIME_SECONDS);
-    setGameTimeLeft(TOTAL_GAME_TIME_SECONDS);
+    resetState();
   };
 
   const endTurn = () => {
@@ -162,66 +191,159 @@ export default function App() {
 
   if (!myId) {
     return (
-      <div>
-        <h1>One Stroke Game</h1>
-        <p>Connecting...</p>
+      <div className="card">
+        <h1>OneStroke</h1>
+        <Loader2 className="loading-spinner" />
+        <p>Connecting to server...</p>
       </div>
     );
   }
 
+  // --- RENDERING DIFFERENT STATES ---
+
   if (gameState === "disconnected") {
     return (
-      <div>
-        <h1>One Stroke Game</h1>
-        <p>Welcome! Click below to join the waiting room.</p>
-        <button onClick={joinWaitingRoom}>Join Waiting Room</button>
+      <div className="card">
+        <h1>OneStroke</h1>
+        <h2>Draw together, win alone!</h2>
+
+        <div style={{ textAlign: "left", margin: "2rem auto", maxWidth: "400px", lineHeight: "1.8" }}>
+          <p>🎨 <strong>Rules of the Game:</strong></p>
+          <ol>
+            <li>Every player gets a unique secret word to draw.</li>
+            <li>Players share ONE single canvas.</li>
+            <li>You get exactly ONE stroke per turn.</li>
+            <li>Try to make the communal drawing look like YOUR word.</li>
+            <li>The AI rules all! It will judge the final canvas. The player whose word it recognizes most wins!</li>
+          </ol>
+        </div>
+
+        <button onClick={joinWaitingRoom} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '0 auto' }}>
+          <Play size={20} /> Join Waiting Room
+        </button>
       </div>
     );
   }
 
   if (gameState === "waiting") {
     return (
-      <div>
-        <h1>One Stroke Game</h1>
-        <p>Waiting for players... {waitingCount} in queue</p>
-        <p>Need {MIN_PLAYERS} players minimum to start a room.</p>
-        <button onClick={leaveGame}>Leave Waiting Room</button>
+      <div className="card">
+        <h1>Lobby</h1>
+        <div style={{ margin: "2rem 0" }}>
+          <Users size={48} style={{ opacity: 0.5, marginBottom: '1rem' }} />
+          <h2>Waiting for players...</h2>
+
+          <div className="status-badge waiting">
+            {waitingCount} / {MIN_PLAYERS} Players minimum
+          </div>
+
+          <p style={{ color: 'rgba(255,255,255,0.6)' }}>
+            The game will start automatically when enough players join.
+          </p>
+        </div>
+        <button onClick={leaveGame}>Leave Queue</button>
       </div>
     );
   }
 
+  if (gameState === "judging") {
+    return (
+      <div className="card">
+        <h1>Time's Up!</h1>
+        <Loader2 className="loading-spinner" />
+        <h2>The AI Judge is determining what this looks like...</h2>
+        <p>Will it recognize your word?</p>
+      </div>
+    );
+  }
+
+  if (gameState === "completed" && judgeResults) {
+    // Sort results by probability descending
+    const sortedResults = Object.entries(judgeResults.results)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5); // Take top 5
+
+    const didIWin = judgeResults.winnerId === myId;
+
+    return (
+      <div className="card">
+        <Trophy size={64} color={didIWin ? "#ffd700" : "#a0a0a0"} style={{ marginBottom: "1rem" }} />
+        <h1>{didIWin ? "You Won!" : "Game Over"}</h1>
+
+        <div className="target-word-banner">
+          The AI thinks it looks like:<br />
+          <strong>{judgeResults.winnerWord}</strong> ({(judgeResults.maxProb * 100).toFixed(1)}%)
+        </div>
+
+        <h3>Your Target Word was: <span style={{ color: didIWin ? "#2ee571" : "#ff4757" }}>{myTargetWord}</span></h3>
+
+        <div className="results-grid">
+          {sortedResults.map(([word, prob]) => (
+            <div key={word} className={`result-item ${word === judgeResults.winnerWord ? 'winner' : ''}`}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', textTransform: 'capitalize' }}>
+                <span>{word} {word === myTargetWord ? "(Yours)" : ""}</span>
+                <span>{(prob * 100).toFixed(1)}%</span>
+              </div>
+              <div className="result-bar-bg">
+                <div className="result-bar-fill" style={{ width: `${prob * 100}%` }}></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: "3rem" }}>
+          <button onClick={leaveGame}>Return to Lobby</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- IN-ROOM / PLAYING STATE ---
+
   return (
     <div>
-      <h1>One Stroke Game</h1>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-        <p>Room: {roomId}</p>
+      <div className="game-header">
+        <div>
+          <div className={`status-badge ${myTurn ? 'active' : 'waiting'}`}>
+            {gameActive ? (myTurn ? "🎯 Your Turn!" : "⏳ Waiting...") : "🕐 Game starting soon..."}
+          </div>
+          <div style={{ fontSize: "0.9rem", color: "rgba(255,255,255,0.6)" }}>
+            Room: {roomId} | Players: {players.length}
+          </div>
+        </div>
+
         {gameActive && (
-          <div style={{ display: 'flex', gap: '20px' }}>
-            <p style={{ color: turnTimeLeft <= 3 ? 'red' : 'black' }}>
-              Turn: {turnTimeLeft}s
-            </p>
-            <p style={{ color: gameTimeLeft <= 30 ? 'red' : 'black' }}>
+          <div style={{ textAlign: "right" }}>
+            <div className={`timer ${gameTimeLeft <= 10 ? 'urgent' : ''}`}>
               Game: {formatTime(gameTimeLeft)}
-            </p>
+            </div>
+            <div style={{ fontSize: "0.9rem", color: turnTimeLeft <= 3 ? "#ff4757" : "rgba(255,255,255,0.8)" }}>
+              Turn ends in: {turnTimeLeft}s
+            </div>
           </div>
         )}
       </div>
-      
-      <p>Players: {players.join(", ")}</p>
-      <p>Current Turn: {currentPlayer || "None"}</p>
 
-      {!gameActive && <p>🕐 Game starting soon...</p>}
-      {gameActive && (myTurn ? <p>🎯 Your Turn!</p> : <p>⏳ Waiting...</p>)}
+      <div className="target-word-banner">
+        Your Secret Goal: <strong>{myTargetWord}</strong>
+      </div>
 
-      <button onClick={leaveGame}>Leave Room</button>
+      <p style={{ margin: "0.5rem 0 1rem", fontSize: "0.9rem", color: "rgba(255,255,255,0.6)" }}>
+        Draw exactly <strong>ONE stroke</strong> to make the canvas look like your word!
+      </p>
 
-      <Canvas canDraw={myTurn} roomId={roomId} />
+      <Canvas
+        ref={canvasRef}
+        canDraw={myTurn}
+        roomId={roomId}
+        onStrokeComplete={endTurn}
+      />
 
-      {myTurn && (
-        <button onClick={endTurn} style={{ marginTop: "10px" }}>
-          End My Turn
+      <div style={{ marginTop: "1rem" }}>
+        <button onClick={leaveGame} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)" }}>
+          Resign
         </button>
-      )}
+      </div>
     </div>
   );
 }
