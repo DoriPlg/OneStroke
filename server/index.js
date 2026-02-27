@@ -16,7 +16,7 @@ let activeJudgeCount = 0;
 const judgeQueue = [];
 
 // Load labels
-const labelsPath = path.join(__dirname, "../hf_model/class_names.txt");
+const labelsPath = path.join(__dirname, "../class_names.txt");
 let availableLabels = [];
 try {
   const content = fs.readFileSync(labelsPath, "utf-8");
@@ -133,6 +133,9 @@ function leaveRoom(socket) {
     const roomId = playerRooms[socket.id];
     const room = rooms[roomId];
 
+    const isCurrentPlayer = room.players.length > 0 && room.players[room.turnIndex] === socket.id;
+    const prevCurrentPlayerId = room.players.length > 0 ? room.players[room.turnIndex] : null;
+
     room.players = room.players.filter(id => id !== socket.id);
     socket.leave(roomId);
     delete playerRooms[socket.id];
@@ -151,6 +154,9 @@ function leaveRoom(socket) {
       console.log(`Room ${roomId} deleted due to insufficient players.`);
       if (room.turnTimer) clearTimeout(room.turnTimer);
       if (room.gameTimer) clearTimeout(room.gameTimer);
+
+      io.to(roomId).emit("room-deleted");
+
       rooms[roomId].players.forEach(playerId => {
         const playerSocket = io.sockets.sockets.get(playerId);
         if (playerSocket) {
@@ -159,15 +165,20 @@ function leaveRoom(socket) {
         }
         delete playerRooms[playerId];
       });
-      io.to(roomId).emit("room-deleted");
       delete rooms[roomId];
     } else {
       // Room still has enough players, just update the player list
       io.to(roomId).emit("player-list", rooms[roomId].players);
-      if (rooms[roomId].turnIndex >= rooms[roomId].players.length) {
-        rooms[roomId].turnIndex = 0;
+
+      if (isCurrentPlayer) {
+        room.turnIndex = room.turnIndex - 1;
+        if (room.turnIndex < 0) room.turnIndex = Math.max(0, room.players.length - 1);
+        advanceTurn(roomId);
+      } else {
+        if (prevCurrentPlayerId) {
+          room.turnIndex = Math.max(0, room.players.indexOf(prevCurrentPlayerId));
+        }
       }
-      advanceTurn(roomId);
     }
   }
 }

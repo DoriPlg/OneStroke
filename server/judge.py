@@ -8,40 +8,23 @@ import torchvision.transforms as transforms
 import io
 import base64
 
-# Define the CNN architecture as used in model.ipynb
-class DoodleCNN(nn.Module):
-    def __init__(self, num_classes):
-        super(DoodleCNN, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 32, 3, padding='same'),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, padding='same'),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, 3, padding='same'),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-        )
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(1152, 256),
-            nn.ReLU(),
-            nn.Linear(256, num_classes)
-        )
+import sys
+import os
+# Add parent directory to path so we can import model.py
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from model import DoodleResNet
 
-    def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
-        return x
+# ──────────────────────────────────────────────
+#  Image Processing
+# ──────────────────────────────────────────────
 
 def process_image(base64_img):
-    print("="*100 + "\nProccessing Image\n" + "="*100)
-    # Remove data log from base64 if present
+    """Convert a base64-encoded canvas image to a model-ready tensor."""
+    # Remove data URI prefix if present
     if ',' in base64_img:
         base64_img = base64_img.split(',')[1]
         
-    # Ensure correct padding for base64 string
+    # Ensure correct padding
     missing_padding = len(base64_img) % 4
     if missing_padding:
         base64_img += '=' * (4 - missing_padding)
@@ -49,44 +32,46 @@ def process_image(base64_img):
     image_data = base64.b64decode(base64_img)
     image = Image.open(io.BytesIO(image_data))
     
-    # We want white lines on black background as per the training data
-    # The canvas likely has black strokes on white background
-    
-    # Extract alpha channel if it exists, otherwise convert to grayscale and invert
+    # Flatten RGBA onto white background
     if image.mode == 'RGBA':
-        # Create a white background image
         background = Image.new('RGB', image.size, (255, 255, 255))
-        # Paste the image on the background.
         background.paste(image, mask=image.split()[3]) 
         image = background
         
     image = image.convert('L')
     
-    # Find bounding box of drawing (non-white pixels)
+    # Find bounding box of drawing (non-white pixels) and crop
     from PIL import ImageChops
     bg = Image.new(image.mode, image.size, 255)
     diff = ImageChops.difference(image, bg)
     bbox = diff.getbbox()
     
     if bbox:
-        # Crop to contents with slight padding
-        image = image.crop((max(0, bbox[0]-10), 
-                            max(0, bbox[1]-10), 
-                            min(image.width, bbox[2]+10), 
-                            min(image.height, bbox[3]+10)))
+        pad = 10
+        image = image.crop((
+            max(0, bbox[0] - pad), 
+            max(0, bbox[1] - pad), 
+            min(image.width, bbox[2] + pad), 
+            min(image.height, bbox[3] + pad)
+        ))
     
-    # Invert to white lines on black background
+    # Invert: white strokes on black background (matches training data)
     import PIL.ImageOps
     image = PIL.ImageOps.invert(image)
     
-    # Convert to 28x28 as the model expects
+    # Resize to model's expected input size
     transform = transforms.Compose([
-        transforms.Resize((28, 28)),
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.ToTensor(),
     ])
     
-    tensor = transform(image).unsqueeze(0) # Add batch dimension [1, 1, 28, 28]
+    tensor = transform(image).unsqueeze(0)  # [1, 1, 64, 64]
     return tensor
+
+
+# ──────────────────────────────────────────────
+#  Main
+# ──────────────────────────────────────────────
 
 def main():
     if len(sys.argv) < 2:
@@ -96,39 +81,25 @@ def main():
     base64_img = sys.stdin.read()
     target_words = sys.argv[1:]
 
-    # Path to model files (relative to where Node.js spawns this, which is /server)
-    model_dir = Path(__file__).parent.parent / 'hf_model'
+    # Path to model files
+    model_dir = Path(__file__).parent.parent
     labels_file = model_dir / 'class_names.txt'
-    weights_file = model_dir / 'pytorch_model.bin'
+    weights_file = model_dir / 'doodle_cnn_improved.pth'
 
     if not labels_file.exists() or not weights_file.exists():
-        print(json.dumps({"error": f"Model files not found in {model_dir}"}))
+        print(json.dumps({"error": f"Model files not found. Expected: {weights_file} and {labels_file}"}))
         sys.exit(1)
 
     # Load labels
-    labels = labels_file.read_text().splitlines()
+    labels = [l.strip() for l in labels_file.read_text().splitlines() if l.strip()]
     num_classes = len(labels)
 
-    # Note: Using the exact Sequential layer structure expected by state dict since that's how it was saved
-    model = nn.Sequential(
-        nn.Conv2d(1, 32, 3, padding='same'),
-        nn.ReLU(),
-        nn.MaxPool2d(2),
-        nn.Conv2d(32, 64, 3, padding='same'),
-        nn.ReLU(),
-        nn.MaxPool2d(2),
-        nn.Conv2d(64, 128, 3, padding='same'),
-        nn.ReLU(),
-        nn.MaxPool2d(2),
-        nn.Flatten(),
-        nn.Linear(1152, 256),
-        nn.ReLU(),
-        nn.Linear(256, num_classes)
-    )
-
+    # Load model
+    model = DoodleResNet(num_classes)
+    
     try:
         state_dict = torch.load(weights_file, map_location='cpu', weights_only=True)
-        model.load_state_dict(state_dict, strict=False)
+        model.load_state_dict(state_dict)
         model.eval()
     except Exception as e:
         print(json.dumps({"error": f"Failed to load model weights: {str(e)}"}))
@@ -146,18 +117,28 @@ def main():
         outputs = model(img_tensor)
         probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
 
-    # Construct results dictionary
+    # Match target words to labels
+    # Labels in class_names.txt may use spaces; game labels may use underscores
+    # Build lookup that handles both formats
+    label_lookup = {}
+    for idx, label in enumerate(labels):
+        label_lookup[label] = idx
+        label_lookup[label.replace(' ', '_')] = idx
+        label_lookup[label.replace('_', ' ')] = idx
+
     results = {}
     winner = None
     max_prob = -1.0
     
     for word in target_words:
         word = word.strip()
-        if word in labels:
-            idx = labels.index(word)
+        lookup_key = word
+        
+        if lookup_key in label_lookup:
+            idx = label_lookup[lookup_key]
             prob = probabilities[idx].item()
         else:
-            prob = 0.0 # Unknown word
+            prob = 0.0  # Unknown word
             
         results[word] = prob
         
