@@ -3,3 +3,4 @@ OneStroke_venv/
 hf_model/
 doodle_cnn.pth
 node_modules/
+__pycache__/
