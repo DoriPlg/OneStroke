@@ -254,7 +254,15 @@ def main():
         print("  ✅ Checkpoint loaded successfully")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    # Two parameter groups for fine-tuning:
+    # - backbone (pretrained): very small LR to preserve learned features
+    # - classifier head (new): 10x higher LR to learn quickly
+    backbone_params = [p for n, p in model.named_parameters() if 'resnet.fc' not in n]
+    head_params = [p for n, p in model.named_parameters() if 'resnet.fc' in n]
+    optimizer = optim.AdamW([
+        {'params': backbone_params, 'lr': args.lr * 0.1},
+        {'params': head_params,     'lr': args.lr},
+    ], weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=3, factor=0.5
     )
