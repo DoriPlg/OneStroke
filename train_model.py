@@ -101,7 +101,7 @@ def load_and_prepare_data(dataset_path, num_samples, min_samples_per_class=20):
         except Exception:
             continue
     
-    X = np.array(images, dtype=np.float32) / 255.0
+    X = np.array(images, dtype=np.uint8)
     X = X.reshape(-1, 1, IMG_SIZE, IMG_SIZE)
     y = np.array(labels, dtype=np.int64)
     
@@ -156,7 +156,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_augmentatio
     total = 0
     
     for inputs, labels in tqdm(loader, desc="  Training", leave=False):
-        inputs, labels = inputs.to(device), labels.to(device)
+        inputs = inputs.to(device, dtype=torch.float32) / 255.0
+        labels = labels.to(device)
         
         if use_augmentation:
             inputs = augment_batch(inputs)
@@ -183,7 +184,8 @@ def validate(model, loader, criterion, device):
     total = 0
     
     for inputs, labels in loader:
-        inputs, labels = inputs.to(device), labels.to(device)
+        inputs = inputs.to(device, dtype=torch.float32) / 255.0
+        labels = labels.to(device)
         outputs = model(inputs)
         loss = criterion(outputs, labels)
         
@@ -254,15 +256,11 @@ def main():
         print("  ✅ Checkpoint loaded successfully")
     
     criterion = nn.CrossEntropyLoss()
-    # Two parameter groups for fine-tuning:
-    # - backbone (pretrained): very small LR to preserve learned features
-    # - classifier head (new): 10x higher LR to learn quickly
-    backbone_params = [p for n, p in model.named_parameters() if 'resnet.fc' not in n]
-    head_params = [p for n, p in model.named_parameters() if 'resnet.fc' in n]
-    optimizer = optim.AdamW([
-        {'params': backbone_params, 'lr': args.lr * 0.1},
-        {'params': head_params,     'lr': args.lr},
-    ], weight_decay=1e-4)
+    # Only optimise the trainable parameters (the classifier head)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    trainable_count = sum(p.numel() for p in trainable_params)
+    print(f"  🔧 Trainable parameters: {trainable_count:,} / {total_params:,}")
+    optimizer = optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=3, factor=0.5
     )

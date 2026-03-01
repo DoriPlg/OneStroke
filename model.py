@@ -18,7 +18,11 @@ class DoodleResNet(nn.Module):
         # Load ResNet18 with ImageNet pretrained weights
         self.resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
 
-        # Replace the classification head for our number of classes
+        # Freeze ALL backbone layers — only the new head will be trained
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+
+        # Replace the classification head for our number of classes (trainable)
         num_ftrs = self.resnet.fc.in_features
         self.resnet.fc = nn.Linear(num_ftrs, num_classes)
 
