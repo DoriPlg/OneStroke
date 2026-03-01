@@ -1,0 +1,150 @@
+The Eiffel Tower
+airplane
+ambulance
+anvil
+apple
+axe
+backpack
+banana
+bandage
+bat
+bathtub
+bed
+bicycle
+binoculars
+bowtie
+brain
+bridge
+broccoli
+broom
+bucket
+butterfly
+cactus
+cake
+calculator
+camera
+campfire
+candle
+cannon
+car
+carrot
+castle
+cell phone
+chair
+chandelier
+circle
+clock
+cloud
+compass
+cookie
+crab
+crocodile
+crown
+cup
+diamond
+dolphin
+donut
+door
+drums
+dumbbell
+elephant
+envelope
+eye
+eyeglasses
+face
+feather
+fence
+fire hydrant
+flashlight
+flower
+flying saucer
+fork
+frog
+frying pan
+giraffe
+grass
+guitar
+hammer
+hand
+harp
+hat
+headphones
+helicopter
+helmet
+hot air balloon
+hot dog
+hourglass
+house
+ice cream
+key
+keyboard
+ladder
+lantern
+laptop
+leaf
+light bulb
+lighthouse
+lightning
+lollipop
+mailbox
+megaphone
+mermaid
+microphone
+monkey
+moon
+mountain
+moustache
+mushroom
+octopus
+owl
+paintbrush
+palm tree
+pants
+parachute
+peanut
+pencil
+penguin
+piano
+picture frame
+pineapple
+pizza
+pliers
+rabbit
+rainbow
+rhinoceros
+roller coaster
+sailboat
+saw
+saxophone
+scissors
+sea turtle
+shark
+shoe
+skateboard
+skull
+snail
+snake
+snowflake
+snowman
+spider
+spoon
+stairs
+star
+stethoscope
+stop sign
+strawberry
+submarine
+sun
+sword
+t-shirt
+teapot
+television
+tent
+toilet
+tornado
+traffic light
+tree
+umbrella
+watermelon
+wheel
+windmill
