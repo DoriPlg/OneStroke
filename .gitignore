@@ -4,3 +4,4 @@ hf_model/
 doodle_cnn.pth
 node_modules/
 __pycache__/
+doodle_cnn*
