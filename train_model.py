@@ -27,7 +27,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
-from model import DoodleResNet
+from model import ImprovedDoodleCNN
 
 
 # ──────────────────────────────────────────────
@@ -244,7 +244,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
     
     # Model
-    model = DoodleResNet(num_classes).to(device)
+    model = ImprovedDoodleCNN(num_classes).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"\n🧠  Model: {total_params:,} parameters, {num_classes} classes")
     
@@ -256,11 +256,7 @@ def main():
         print("  ✅ Checkpoint loaded successfully")
     
     criterion = nn.CrossEntropyLoss()
-    # Only optimise the trainable parameters (the classifier head)
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    trainable_count = sum(p.numel() for p in trainable_params)
-    print(f"  🔧 Trainable parameters: {trainable_count:,} / {total_params:,}")
-    optimizer = optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=3, factor=0.5
     )

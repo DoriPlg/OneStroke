@@ -12,7 +12,7 @@ import sys
 import os
 # Add parent directory to path so we can import model.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from model import DoodleResNet
+from model import ImprovedDoodleCNN
 
 # ──────────────────────────────────────────────
 #  Image Processing
@@ -95,7 +95,7 @@ def main():
     num_classes = len(labels)
 
     # Load model
-    model = DoodleResNet(num_classes)
+    model = ImprovedDoodleCNN(num_classes)
     
     try:
         state_dict = torch.load(weights_file, map_location='cpu', weights_only=True)
