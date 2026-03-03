@@ -115,6 +115,7 @@ def load_and_prepare_data(dataset_path, num_samples, min_samples_per_class=20):
 
 def augment_batch(images):
     """Apply simple augmentations to a batch of image tensors."""
+    device = images.device
     batch_size = images.size(0)
     augmented = images.clone()
     
@@ -127,7 +128,7 @@ def augment_batch(images):
             theta = torch.tensor([
                 [cos_a, -sin_a, 0],
                 [sin_a,  cos_a, 0]
-            ], dtype=torch.float32).unsqueeze(0)
+            ], dtype=torch.float32, device=device).unsqueeze(0)
             grid = F.affine_grid(theta, augmented[i:i+1].size(), align_corners=False)
             augmented[i:i+1] = F.grid_sample(augmented[i:i+1], grid, align_corners=False)
         
@@ -138,7 +139,7 @@ def augment_batch(images):
             theta = torch.tensor([
                 [1, 0, tx],
                 [0, 1, ty]
-            ], dtype=torch.float32).unsqueeze(0)
+            ], dtype=torch.float32, device=device).unsqueeze(0)
             grid = F.affine_grid(theta, augmented[i:i+1].size(), align_corners=False)
             augmented[i:i+1] = F.grid_sample(augmented[i:i+1], grid, align_corners=False)
     
